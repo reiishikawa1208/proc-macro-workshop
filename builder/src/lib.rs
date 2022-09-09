@@ -32,6 +32,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         }
     });
+    let builder_build_stream_iter = fields.named.iter().map(|field| {
+        let ident = &field.ident;
+        quote! {
+            #ident: self.#ident.clone().unwrap()
+        }
+    });
 
     let expanded = quote! {
         pub struct #builder_name {
@@ -48,6 +54,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         impl #builder_name {
             #(#builder_fields_setter_stream_iter)*
+
+            pub fn build(&mut self) -> Result<#struct_name, Box<dyn std::error::Error>> {
+                Ok(#struct_name {
+                    #(#builder_build_stream_iter),*
+                })
+            }
         }
     };
 
