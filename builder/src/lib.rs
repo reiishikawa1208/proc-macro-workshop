@@ -24,6 +24,39 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
         }
+
+        impl CommandBuilder {
+            fn executable(&mut self, executable: String) -> &mut Self {
+                self.executable = Some(executable);
+                self
+            }
+
+            fn args(&mut self, args: Vec<String>) -> &mut Self {
+                self.args = Some(args);
+                self
+            }
+            fn env(&mut self, env: Vec<String>) -> &mut Self {
+                self.env = Some(env);
+                self
+            }
+            fn current_dir(&mut self, current_dir: String) -> &mut Self {
+                self.current_dir = Some(current_dir);
+                self
+            }
+
+            pub fn build(&mut self) -> Result<Command, Box<dyn std::error::Error>> {
+                if self.executable.is_none() || self.args.is_none() || self.env.is_none() || self.current_dir.is_none() {
+                    Err("Error occured!".into())
+                } else {
+                    Ok(Command {
+                        executable: self.executable.clone().unwrap(),
+                        args: self.args.clone().unwrap(),
+                        env: self.env.clone().unwrap(),
+                        current_dir: self.current_dir.clone().unwrap(),
+                    })
+                }
+            }
+        };
     };
 
     TokenStream::from(expanded)
