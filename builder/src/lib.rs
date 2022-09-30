@@ -1,11 +1,11 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, FieldsNamed, GenericArgument, Path,
-    PathArguments, PathSegment, Type, TypePath,
+    parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed, GenericArgument, Lit,
+    Meta, MetaList, MetaNameValue, NestedMeta, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let struct_name = input.ident;
@@ -26,27 +26,76 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
     });
     let initial_fileds_stream_iter = fields.named.iter().map(|field| {
-        let ident = &field.ident;
-        quote! {
-            #ident: None
-        }
-    });
-    let builder_fields_setter_stream_iter = fields.named.iter().map(|field| {
         let ty = &field.ty;
         let ident = &field.ident;
-        if is_option_type(&ty) {
-            let inner_type = option_inner_type(&ty);
+        let attrs = &field.attrs;
+        let each_string_literal = extract_string_literal_of_attr_each(&attrs);
+        if is_vec_type(&ty) && each_string_literal.is_some() {
             quote! {
-                fn #ident(&mut self, #ident: #inner_type) -> &mut Self {
-                    self.#ident = Some(#ident);
-                    self
-                }
+                #ident: Some(vec![])
             }
         } else {
             quote! {
-                fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                    self.#ident = Some(#ident);
-                    self
+                #ident: None
+            }
+        }
+    });
+
+    let builder_fields_setter_stream_iter = fields.named.iter().map(|field| {
+        let ty = &field.ty;
+        let ident = &field.ident;
+        let attrs = &field.attrs;
+        let each_string_literal = extract_string_literal_of_attr_each(&attrs);
+
+        if is_vec_type(&ty) && each_string_literal.is_some() {
+            let inner_type = extract_inner_type(&ty);
+            let lit = each_string_literal.unwrap();
+            let lit_ident = format_ident!("{}", lit);
+
+            if lit == ident.clone().unwrap().to_string() {
+                let ref_ident = format_ident!("ref_{}", lit);
+                quote! {
+                    fn #ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
+                        if let Some(ref mut #ref_ident) = self.#ident {
+                            #ref_ident.push(#lit_ident);
+                        } else {
+                            self.#ident = Some(vec![#lit_ident]);
+                        };
+                        self
+                    }
+                }
+            } else {
+                quote! {
+                    fn #lit_ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
+                        if let Some(ref mut #ident) = self.#ident {
+                            #ident.push(#lit_ident);
+                        } else {
+                            self.#ident = Some(vec![#lit_ident]);
+                        };
+                        self
+                    }
+
+                    fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                        self.#ident = Some(#ident);
+                        self
+                    }
+                }
+            }
+        } else {
+            if is_option_type(&ty) {
+                let inner_type = extract_inner_type(&ty);
+                quote! {
+                    fn #ident(&mut self, #ident: #inner_type) -> &mut Self {
+                        self.#ident = Some(#ident);
+                        self
+                    }
+                }
+            } else {
+                quote! {
+                    fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                        self.#ident = Some(#ident);
+                        self
+                    }
                 }
             }
         }
@@ -111,7 +160,14 @@ fn is_option_type(ty: &Type) -> bool {
     }
 }
 
-fn option_inner_type(ty: &Type) -> &GenericArgument {
+fn is_vec_type(ty: &Type) -> bool {
+    match last_path_segment(&ty) {
+        Some(path_seg) => path_seg.ident == "Vec",
+        None => false,
+    }
+}
+
+fn extract_inner_type(ty: &Type) -> &GenericArgument {
     match last_path_segment(&ty) {
         Some(PathSegment {
             ident: _,
@@ -134,4 +190,32 @@ fn last_path_segment(ty: &Type) -> Option<&PathSegment> {
         }) => seg.last(),
         _ => None,
     }
+}
+
+fn extract_string_literal_of_attr_each(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| match attr.parse_meta() {
+        Ok(Meta::List(MetaList {
+            ref path,
+            paren_token: _,
+            ref nested,
+        })) => {
+            (path.get_ident()? == "builder").then(|| ())?;
+
+            if let NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                path,
+                eq_token: _,
+                lit: Lit::Str(ref litstr),
+            })) = nested.first()?
+            {
+                if path.get_ident()?.to_string() == "each" {
+                    Some(litstr.value())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    })
 }
