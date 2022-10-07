@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, Attribute, Data, DeriveInput, Fields, FieldsNamed, GenericArgument, Lit,
-    Meta, MetaList, MetaNameValue, NestedMeta, Path, PathArguments, PathSegment, Type, TypePath,
+    parse_macro_input, Attribute, Data, DeriveInput, Error, Fields, FieldsNamed, GenericArgument,
+    Lit, Meta, MetaList, MetaNameValue, NestedMeta, Path, PathArguments, PathSegment, Type,
+    TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -29,8 +30,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let ty = &field.ty;
         let ident = &field.ident;
         let attrs = &field.attrs;
-        let each_string_literal = extract_string_literal_of_attr_each(&attrs);
-        if is_vec_type(&ty) && each_string_literal.is_some() {
+        let attr_each = parse_attr_each(&attrs);
+        if is_vec_type(&ty) && attr_each.is_some() {
             quote! {
                 #ident: Some(vec![])
             }
@@ -45,41 +46,49 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let ty = &field.ty;
         let ident = &field.ident;
         let attrs = &field.attrs;
-        let each_string_literal = extract_string_literal_of_attr_each(&attrs);
+        let attr_each = parse_attr_each(&attrs);
 
-        if is_vec_type(&ty) && each_string_literal.is_some() {
-            let inner_type = extract_inner_type(&ty);
-            let lit = each_string_literal.unwrap();
-            let lit_ident = format_ident!("{}", lit);
+        if is_vec_type(&ty) && attr_each.is_some() {
+            match attr_each {
+                Some(AttrParseResult::InvalidKey(meta)) => {
+                    return Error::new_spanned(meta, "expected `builder(each = \"...\")`")
+                        .to_compile_error()
+                }
+                Some(AttrParseResult::Value(lit)) => {
+                    let inner_type = extract_inner_type(&ty);
+                    let lit_ident = format_ident!("{}", lit);
 
-            if lit == ident.clone().unwrap().to_string() {
-                let ref_ident = format_ident!("ref_{}", lit);
-                quote! {
-                    fn #ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
-                        if let Some(ref mut #ref_ident) = self.#ident {
-                            #ref_ident.push(#lit_ident);
-                        } else {
-                            self.#ident = Some(vec![#lit_ident]);
-                        };
-                        self
+                    if lit == ident.clone().unwrap().to_string() {
+                        let ref_ident = format_ident!("ref_{}", lit);
+                        quote! {
+                            fn #ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
+                                if let Some(ref mut #ref_ident) = self.#ident {
+                                    #ref_ident.push(#lit_ident);
+                                } else {
+                                    self.#ident = Some(vec![#lit_ident]);
+                                };
+                                self
+                            }
+                        }
+                    } else {
+                        quote! {
+                            fn #lit_ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
+                                if let Some(ref mut #ident) = self.#ident {
+                                    #ident.push(#lit_ident);
+                                } else {
+                                    self.#ident = Some(vec![#lit_ident]);
+                                };
+                                self
+                            }
+
+                            fn #ident(&mut self, #ident: #ty) -> &mut Self {
+                                self.#ident = Some(#ident);
+                                self
+                            }
+                        }
                     }
                 }
-            } else {
-                quote! {
-                    fn #lit_ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
-                        if let Some(ref mut #ident) = self.#ident {
-                            #ident.push(#lit_ident);
-                        } else {
-                            self.#ident = Some(vec![#lit_ident]);
-                        };
-                        self
-                    }
-
-                    fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                        self.#ident = Some(#ident);
-                        self
-                    }
-                }
+                None => unreachable!(),
             }
         } else {
             if is_option_type(&ty) {
@@ -192,30 +201,38 @@ fn last_path_segment(ty: &Type) -> Option<&PathSegment> {
     }
 }
 
-fn extract_string_literal_of_attr_each(attrs: &[Attribute]) -> Option<String> {
-    attrs.iter().find_map(|attr| match attr.parse_meta() {
-        Ok(Meta::List(MetaList {
-            ref path,
-            paren_token: _,
-            ref nested,
-        })) => {
-            (path.get_ident()? == "builder").then(|| ())?;
+enum AttrParseResult {
+    Value(String),
+    InvalidKey(Meta),
+}
 
-            if let NestedMeta::Meta(Meta::NameValue(MetaNameValue {
-                path,
-                eq_token: _,
-                lit: Lit::Str(ref litstr),
-            })) = nested.first()?
-            {
-                if path.get_ident()?.to_string() == "each" {
-                    Some(litstr.value())
+fn parse_attr_each(attrs: &[Attribute]) -> Option<AttrParseResult> {
+    attrs.iter().find_map(|attr| match attr.parse_meta() {
+        Ok(meta) => match meta {
+            Meta::List(MetaList {
+                ref path,
+                paren_token: _,
+                ref nested,
+            }) => {
+                (path.get_ident()? == "builder").then(|| ())?;
+
+                if let NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                    path,
+                    eq_token: _,
+                    lit: Lit::Str(ref litstr),
+                })) = nested.first()?
+                {
+                    if path.get_ident()?.to_string() == "each" {
+                        Some(AttrParseResult::Value(litstr.value()))
+                    } else {
+                        Some(AttrParseResult::InvalidKey(meta))
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
             }
-        }
+            _ => None,
+        },
         _ => None,
     })
 }
