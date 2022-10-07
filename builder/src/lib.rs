@@ -22,7 +22,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         } else {
             quote! {
-                #ident: Option<#ty>
+                #ident: std::option::Option<#ty>
             }
         }
     });
@@ -33,11 +33,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let attr_each = parse_attr_each(&attrs);
         if is_vec_type(&ty) && attr_each.is_some() {
             quote! {
-                #ident: Some(vec![])
+                #ident:  std::option::Option::Some(vec![])
             }
         } else {
             quote! {
-                #ident: None
+                #ident:  std::option::Option::None
             }
         }
     });
@@ -50,11 +50,11 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         if is_vec_type(&ty) && attr_each.is_some() {
             match attr_each {
-                Some(AttrParseResult::InvalidKey(meta)) => {
+                std::option::Option::Some(AttrParseResult::InvalidKey(meta)) => {
                     return Error::new_spanned(meta, "expected `builder(each = \"...\")`")
                         .to_compile_error()
                 }
-                Some(AttrParseResult::Value(lit)) => {
+                std::option::Option::Some(AttrParseResult::Value(lit)) => {
                     let inner_type = extract_inner_type(&ty);
                     let lit_ident = format_ident!("{}", lit);
 
@@ -62,10 +62,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         let ref_ident = format_ident!("ref_{}", lit);
                         quote! {
                             fn #ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
-                                if let Some(ref mut #ref_ident) = self.#ident {
+                                if let  std::option::Option::Some(ref mut #ref_ident) = self.#ident {
                                     #ref_ident.push(#lit_ident);
                                 } else {
-                                    self.#ident = Some(vec![#lit_ident]);
+                                    self.#ident =  std::option::Option::Some(vec![#lit_ident]);
                                 };
                                 self
                             }
@@ -73,36 +73,36 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     } else {
                         quote! {
                             fn #lit_ident(&mut self, #lit_ident: #inner_type) -> &mut Self {
-                                if let Some(ref mut #ident) = self.#ident {
+                                if let  std::option::Option::Some(ref mut #ident) = self.#ident {
                                     #ident.push(#lit_ident);
                                 } else {
-                                    self.#ident = Some(vec![#lit_ident]);
+                                    self.#ident =  std::option::Option::Some(vec![#lit_ident]);
                                 };
                                 self
                             }
 
                             fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                                self.#ident = Some(#ident);
+                                self.#ident =  std::option::Option::Some(#ident);
                                 self
                             }
                         }
                     }
                 }
-                None => unreachable!(),
+                std::option::Option::None => unreachable!(),
             }
         } else {
             if is_option_type(&ty) {
                 let inner_type = extract_inner_type(&ty);
                 quote! {
                     fn #ident(&mut self, #ident: #inner_type) -> &mut Self {
-                        self.#ident = Some(#ident);
+                        self.#ident =  std::option::Option::Some(#ident);
                         self
                     }
                 }
             } else {
                 quote! {
                     fn #ident(&mut self, #ident: #ty) -> &mut Self {
-                        self.#ident = Some(#ident);
+                        self.#ident =  std::option::Option::Some(#ident);
                         self
                     }
                 }
@@ -139,7 +139,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         impl #builder_name {
             #(#builder_fields_setter_stream_iter)*
 
-            pub fn build(&mut self) -> Result<#struct_name, Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> std::result::Result<#struct_name, std::boxed::Box<dyn std::error::Error>> {
                 Ok(#struct_name {
                     #(#builder_build_stream_iter),*
                 })
@@ -164,40 +164,40 @@ fn extract_struct_fields(data: &Data) -> &FieldsNamed {
 
 fn is_option_type(ty: &Type) -> bool {
     match last_path_segment(&ty) {
-        Some(path_seg) => path_seg.ident == "Option",
-        None => false,
+        std::option::Option::Some(path_seg) => path_seg.ident == "Option",
+        std::option::Option::None => false,
     }
 }
 
 fn is_vec_type(ty: &Type) -> bool {
     match last_path_segment(&ty) {
-        Some(path_seg) => path_seg.ident == "Vec",
-        None => false,
+        std::option::Option::Some(path_seg) => path_seg.ident == "Vec",
+        std::option::Option::None => false,
     }
 }
 
 fn extract_inner_type(ty: &Type) -> &GenericArgument {
     match last_path_segment(&ty) {
-        Some(PathSegment {
+        std::option::Option::Some(PathSegment {
             ident: _,
             arguments: PathArguments::AngleBracketed(ref gen_arg),
         }) => gen_arg.args.first(),
-        _ => None,
+        _ => std::option::Option::None,
     }
     .expect("invalid option type")
 }
 
-fn last_path_segment(ty: &Type) -> Option<&PathSegment> {
+fn last_path_segment(ty: &Type) -> std::option::Option<&PathSegment> {
     match ty {
         &Type::Path(TypePath {
-            qself: None,
+            qself: std::option::Option::None,
             path:
                 Path {
                     segments: ref seg,
                     leading_colon: _,
                 },
         }) => seg.last(),
-        _ => None,
+        _ => std::option::Option::None,
     }
 }
 
@@ -206,7 +206,7 @@ enum AttrParseResult {
     InvalidKey(Meta),
 }
 
-fn parse_attr_each(attrs: &[Attribute]) -> Option<AttrParseResult> {
+fn parse_attr_each(attrs: &[Attribute]) -> std::option::Option<AttrParseResult> {
     attrs.iter().find_map(|attr| match attr.parse_meta() {
         Ok(meta) => match meta {
             Meta::List(MetaList {
@@ -223,16 +223,16 @@ fn parse_attr_each(attrs: &[Attribute]) -> Option<AttrParseResult> {
                 })) = nested.first()?
                 {
                     if path.get_ident()?.to_string() == "each" {
-                        Some(AttrParseResult::Value(litstr.value()))
+                        std::option::Option::Some(AttrParseResult::Value(litstr.value()))
                     } else {
-                        Some(AttrParseResult::InvalidKey(meta))
+                        std::option::Option::Some(AttrParseResult::InvalidKey(meta))
                     }
                 } else {
-                    None
+                    std::option::Option::None
                 }
             }
-            _ => None,
+            _ => std::option::Option::None,
         },
-        _ => None,
+        _ => std::option::Option::None,
     })
 }
